@@ -28,7 +28,13 @@
 #include "trace.h"
 
 #include <windows.h>
+
+#ifndef _MSC_VER
 #include <ntdef.h>
+#else
+#include <ntdef_temp.h>
+#endif
+
 #include <psapi.h>
 #include <stdio.h>
 #include <string.h>
@@ -587,7 +593,7 @@ static char *unicode_to_ansi(PUNICODE_STRING uni)
 
 	len = WideCharToMultiByte(CP_UTF8, 0, uni->Buffer, uni->Length / sizeof(wchar_t), 0, 0, NULL, NULL);
 	if(len > 0) {
-		name = malloc(len + 1);
+		name = (char*)malloc(len + 1);
 		WideCharToMultiByte(CP_UTF8, 0, uni->Buffer, uni->Length / sizeof(wchar_t), name, len, NULL, NULL);
 		name[len] = 0;
 	}
@@ -1352,9 +1358,11 @@ int _access_hook(const char *pathname, int mode)
 
 FILE *fopen_hook(const char *path, const char *mode)
 {
+	FILE *ret;
+
 	DEBUG_HOOK("fopen mode = %s\n", mode );
 
-	FILE *ret = fopen_orig(path, mode);
+	ret = fopen_orig(path, mode);
 	if(strchr(mode, 'w') == NULL &&
 	   strchr(mode, 'a') == NULL &&
 	   ( strchr(mode, '+') == NULL || ret == NULL ) ) {
@@ -1742,6 +1750,24 @@ DWORD tup_inject_init(remote_thread_t* r)
 }
 
 int remote_stub(void);
+
+
+#ifdef _MSC_VER
+__declspec(naked) int remote_stub(void)
+{
+	__asm {
+		push 0xDEADBEEF;    // return address, [1]
+		pushfd;
+		pushad;
+		push 0xDEADBEEF;    // function parameter, [8]
+		mov eax, 0xDEADBEEF; // function to call, [13]
+		call eax;
+		popad;
+		popfd;
+		ret;
+	};
+}
+#else
 __asm(
   ".globl _remote_stub\n"
   "_remote_stub:\n"
@@ -1755,8 +1781,9 @@ __asm(
   "popfl\n"
   "ret"
 );
+#endif
 
-static void WINAPI remote_init( remote_thread_t *r )
+void WINAPI remote_init( remote_thread_t *r )
 {
 	HMODULE h;
 	tup_init_t p;
@@ -1771,7 +1798,7 @@ static void WINAPI remote_init( remote_thread_t *r )
 	p(r);
 }
 
-static void remote_end(void)
+void remote_end(void)
 {
 }
 
@@ -1785,6 +1812,8 @@ int tup_inject_dll(
 	DWORD old_protect;
 	HANDLE process;
 	HMODULE kernel32;
+	CONTEXT ctx;
+	unsigned char *code;
 
 	memset(&remote, 0, sizeof(remote));
 	kernel32 = LoadLibraryA("kernel32.dll");
@@ -1797,7 +1826,6 @@ int tup_inject_dll(
 	strcat(remote.dll_name, "tup-dllinject.dll");
 	strcat(remote.func_name, "tup_inject_init");
 
-	CONTEXT ctx;
 	ctx.ContextFlags = CONTEXT_CONTROL;
 	if( !GetThreadContext( lpProcessInformation->hThread, &ctx ) )
 		return -1;
@@ -1831,13 +1859,18 @@ int tup_inject_dll(
 	if (!VirtualProtectEx(process, remote_data, code_size + sizeof(remote), PAGE_READWRITE, &old_protect))
 		return -1;
 
-	unsigned char code[code_size];
+	code = (unsigned char *)malloc(code_size);
 	memcpy( code, &remote_stub, code_size );
 	*(DWORD*)(code + 1) = ctx.Eip;
 	*(DWORD*)(code + 8) = (DWORD)remote_data + code_size;
 	*(DWORD*)(code + 13) = (DWORD)remote_data + ( (DWORD)&remote_init - (DWORD)&remote_stub );
 	if (!WriteProcessMemory(process, remote_data, code, code_size, NULL))
+	{
+		free (code);
 		return -1;
+	}
+	
+	free (code);	// free code array since it's not used any more.
 
 	if (!WriteProcessMemory(process, remote_data + code_size, &remote, sizeof(remote), NULL))
 		return -1;

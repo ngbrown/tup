@@ -42,11 +42,13 @@ static void do_hook(void* fphook, void** fporig, IMAGE_THUNK_DATA* cur)
 static void hook(HMODULE h, const char *module_name, IMAGE_THUNK_DATA* orig, IMAGE_THUNK_DATA* cur,
 		 const struct patch_entry *begin, const struct patch_entry *end)
 {
+	IMAGE_IMPORT_BY_NAME* name;
+	const struct patch_entry *i;
+
 	if(orig->u1.Ordinal & IMAGE_ORDINAL_FLAG)
 		return;
 
-	IMAGE_IMPORT_BY_NAME* name = (IMAGE_IMPORT_BY_NAME*) (orig->u1.AddressOfData + (char*) h);
-	const struct patch_entry *i;
+	name = (IMAGE_IMPORT_BY_NAME*) (orig->u1.AddressOfData + (char*) h);
 	for(i = begin; i != end; i++) {
 		if(i->skip)
 			continue;
@@ -94,13 +96,13 @@ int iat_patch(struct patch_entry *begin, struct patch_entry *end)
 	DWORD modnum;
 	HMODULE modules[256];
 	char filename[MAX_PATH];
+	DWORD i;
 
 	if(!EnumProcessModules(GetCurrentProcess(), modules, sizeof(modules), &modnum))
 		return -1;
 
 	modnum /= sizeof(HMODULE);
 
-	DWORD i;
 	for(i = 0; i < modnum; i++) {
 		if(!GetModuleFileNameA(modules[i], filename, sizeof(filename))) {
 			return -1;

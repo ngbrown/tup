@@ -35,13 +35,14 @@ static int hot_patch_int(void *old_proc, void *new_proc, void **orig_proc)
 	};
 
 	BYTE *begin = (BYTE*)old_proc - 5;
-
+	int ret;
 	DWORD old_protect;
+
 	if(!VirtualProtect((PVOID)begin, sizeof(signature),
 			   PAGE_EXECUTE_WRITECOPY, &old_protect))
 		return -1;
 
-	int ret = -1;
+	ret = -1;
 	if(memcmp((PVOID)begin, signature, sizeof(signature))) {
 		DEBUG_HOOK("%x %x %x %x %x %x %x\n", begin[0], begin[1],begin[2],begin[3],begin[4],begin[5],begin[6]);
 		goto exit;
@@ -63,12 +64,14 @@ exit:
 int hot_patch(struct patch_entry *begin, struct patch_entry *end)
 {
 	struct patch_entry *i;
+	void *old_proc;
+
 	for(i = begin; i != end; i++) {
 		HMODULE mod = GetModuleHandle(i->module);
 		if(!mod)
 			continue;
 
-		void *old_proc = GetProcAddress(mod, i->name);
+		old_proc = GetProcAddress(mod, i->name);
 		if(!old_proc)
 			continue;
 
